@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "llm-router-python": {
+      "command": "/ABSOLUTE/PATH/TO/llm-router-mcp/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/llm-router-mcp/server.py"]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__llm-router-python__local_llm"
+    ],
+    "ask": [
+      "mcp__llm-router-python__anthropic_llm",
+      "mcp__llm-router-python__gemini_llm"
+    ]
+  }
+}
