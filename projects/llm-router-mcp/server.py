@@ -9,6 +9,48 @@ from mcp.types import Tool, TextContent
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
+# Seconds to wait for a reply. Local models on a laptop can be slow, so they get longer.
+LOCAL_TIMEOUT = 120
+API_TIMEOUT = 60
+
+
+class ToolError(Exception):
+    """A problem worth showing to the user as a plain message (bad key, provider down, ...)."""
+
+
+# -------------------------
+# Helpers
+# -------------------------
+
+def require_key(name: str) -> str:
+    key = os.getenv(name)
+    if not key:
+        raise ToolError(f"{name} is not set. Add it to .env (see .env.example).")
+    return key
+
+def post_json(provider: str, url: str, payload: dict, headers: dict | None = None,
+              timeout: int = API_TIMEOUT) -> dict:
+    try:
+        res = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    except requests.Timeout:
+        raise ToolError(f"{provider} did not reply within {timeout} seconds.")
+    except requests.ConnectionError:
+        raise ToolError(f"Could not connect to {provider}. Is it running and reachable?")
+    except requests.RequestException as e:
+        raise ToolError(f"{provider} request failed: {e.__class__.__name__}")
+
+    try:
+        data = res.json()
+    except ValueError:
+        raise ToolError(f"{provider} returned a non-JSON reply (HTTP {res.status_code}).")
+
+    if not res.ok:
+        # Providers put the reason in different places; fall back to the status code.
+        error = data.get("error", {}) if isinstance(data, dict) else {}
+        message = error.get("message") if isinstance(error, dict) else error
+        raise ToolError(f"{provider} error (HTTP {res.status_code}): {message or 'no details'}")
+    return data
+
 # -------------------------
 # Tool implementations
 # -------------------------
@@ -16,25 +58,25 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 def local_llm(model: str, prompt: str) -> str:
     url = "http://localhost:11434/api/generate"
     payload = {"model": model, "prompt": prompt, "stream": False}
-    res = requests.post(url, json=payload)
-    data = res.json()
-    return data.get("response", str(data))
+    data = post_json("Ollama", url, payload, timeout=LOCAL_TIMEOUT)
+    if "response" not in data:
+        raise ToolError(f"Unexpected reply from Ollama: {data}")
+    return data["response"]
 
 def gemini_llm(model: str, prompt: str) -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    # The key goes in a header, not the URL, so it never shows up in logs or error messages.
+    headers = {"x-goog-api-key": require_key("GEMINI_API_KEY")}
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}]
     }
-    res = requests.post(url, json=payload)
-    data = res.json()
+    data = post_json("Gemini", url, payload, headers=headers)
     try:
         return data["candidates"][0]["content"]["parts"][0]["text"]
-    except:
-        return str(data)
+    except (KeyError, IndexError, TypeError):
+        raise ToolError(f"Unexpected reply from Gemini: {data}")
 
 def anthropic_llm(model: str, prompt: str) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
     url = "https://api.anthropic.com/v1/messages"
     payload = {
         "model": model,
@@ -43,15 +85,14 @@ def anthropic_llm(model: str, prompt: str) -> str:
     }
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": api_key,
+        "x-api-key": require_key("ANTHROPIC_API_KEY"),
         "anthropic-version": "2023-06-01"
     }
-    res = requests.post(url, json=payload, headers=headers)
-    data = res.json()
+    data = post_json("Anthropic", url, payload, headers=headers)
     try:
         return data["content"][0]["text"]
-    except:
-        return str(data)
+    except (KeyError, IndexError, TypeError):
+        raise ToolError(f"Unexpected reply from Anthropic: {data}")
 
 # -------------------------
 # MCP Server
@@ -87,7 +128,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         result = f"Unknown tool: {name}"
     else:
         func = TOOL_FUNCS[name][0]
-        result = await asyncio.to_thread(func, arguments["model"], arguments["prompt"])
+        try:
+            result = await asyncio.to_thread(func, arguments["model"], arguments["prompt"])
+        except ToolError as e:
+            result = f"Error: {e}"
     return [TextContent(type="text", text=result)]
 
 # -------------------------

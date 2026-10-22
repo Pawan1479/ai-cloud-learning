@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MCP SDK](https://img.shields.io/badge/mcp-1.1.0-6E56CF)](https://pypi.org/project/mcp/)
 [![Ollama](https://img.shields.io/badge/Ollama-local-000000?logo=ollama&logoColor=white)](https://ollama.com/)
+[![Tests](https://github.com/Pawan1479/ai-cloud-learning/actions/workflows/llm-router-mcp.yml/badge.svg)](https://github.com/Pawan1479/ai-cloud-learning/actions/workflows/llm-router-mcp.yml)
 
 ## ✨ What it does
 
@@ -29,6 +30,8 @@ You ──► Claude Code ──(MCP over stdio)──► server.py ──► An
 1. **Tool functions**: one plain function per provider, `xxx_llm(model, prompt) -> str`
 2. **`TOOL_FUNCS` registry**: maps each tool name to its function and description
 3. **MCP plumbing**: `list_tools()` advertises the tools, `call_tool()` dispatches, `main()` serves over stdio
+
+Every network call has a **timeout**, and failures (missing key, provider down, bad reply) come back as a short `Error: ...` message instead of a stack trace.
 
 Adding a provider takes one function and one registry entry. See [PRIMER.md, Part 3](PRIMER.md#part-3-adding-a-new-llm-later-step-by-step).
 
@@ -71,6 +74,7 @@ Ask local_llm (llama3) and anthropic_llm (claude-haiku-5-5) the same question an
 ## 🔐 Security and cost controls
 
 - API keys live in `.env`, which is **gitignored**. Only `.env.example` is committed.
+- The Gemini key is sent in the `x-goog-api-key` header, not the URL, so it never appears in logs or error messages.
 - [`.claude/settings.json`](.claude/settings.json) **allows** the free `local_llm` tool without prompting and **always asks** before the paid `gemini_llm` and `anthropic_llm` tools.
 
 ## 📚 What I learned
@@ -80,11 +84,23 @@ Ask local_llm (llama3) and anthropic_llm (claude-haiku-5-5) the same question an
 - Ollama streams NDJSON by default, so `"stream": false` is needed for a single JSON response
 - Claude Code permission rules (`allow` / `ask`) for controlling tool usage
 
+## 🧪 Tests
+
+Unit tests replace the HTTP calls with fakes, so they need no API keys, network or Ollama:
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest -v
+```
+
+GitHub Actions runs `ruff` and `pytest` on every push that touches this project.
+
 ## 🛣️ Next steps
 
 - [ ] Add OpenAI-compatible providers (Groq, Mistral, OpenRouter)
 - [ ] Add a `compare_llms` tool that fans one prompt out to several models
-- [ ] Add timeouts, retries and clearer error messages
-- [ ] Add unit tests
+- [x] Add timeouts and clearer error messages
+- [x] Add unit tests and CI
+- [ ] Add retries with backoff for rate limits
 
 📘 **Full guide:** [PRIMER.md](PRIMER.md) covers setup from scratch, switching models, adding providers and troubleshooting.
